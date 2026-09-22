@@ -12,7 +12,7 @@ import {
   todayInOffset,
 } from "@/lib/recurrence";
 import { getOrg } from "@/lib/orgs";
-import { getActiveStates } from "@/lib/active";
+import { getActiveStates, type ActiveKind, type ActiveState } from "@/lib/active";
 import { createProgram, listOrgPrograms } from "@/lib/programs";
 import { Button, Card, Input, Label, Select, TimeField } from "@/components/ui";
 import { OrgSettingsPanel } from "@/components/OrgSettingsPanel";
@@ -29,6 +29,9 @@ export default function OrgWorkspacePage() {
   const [org, setOrg] = useState<{ id: string; name: string; owner_id: string } | null>(null);
   const [programs, setPrograms] = useState<Program[]>([]);
   const [showSettings, setShowSettings] = useState(false);
+  const [presence, setPresence] = useState<Record<string, Record<ActiveKind, ActiveState>>>(
+    {},
+  );
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [, setTick] = useState(0);
@@ -58,18 +61,22 @@ export default function OrgWorkspacePage() {
     load();
   }, [load]);
 
-  // Refresh presence glow (control/live) periodically and on changes.
+  // Presence (control/live) for the listed programs, refreshed periodically.
   useEffect(() => {
-    const t = window.setInterval(() => setTick((n) => n + 1), 4000);
-    const refresh = () => setTick((n) => n + 1);
-    window.addEventListener("timer-active-changed", refresh);
-    window.addEventListener("storage", refresh);
-    return () => {
-      window.clearInterval(t);
-      window.removeEventListener("timer-active-changed", refresh);
-      window.removeEventListener("storage", refresh);
+    let active = true;
+    const loadPresence = async () => {
+      const entries = await Promise.all(
+        programs.map(async (p) => [p.id, await getActiveStates(p.id)] as const),
+      );
+      if (active) setPresence(Object.fromEntries(entries));
     };
-  }, []);
+    if (programs.length > 0) loadPresence();
+    const t = window.setInterval(loadPresence, 5000);
+    return () => {
+      active = false;
+      window.clearInterval(t);
+    };
+  }, [programs]);
 
   const create = async () => {
     if (!name.trim()) return;
@@ -208,12 +215,18 @@ export default function OrgWorkspacePage() {
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
                   <Link href={`/p/${p.id}`} target="_blank" rel="noopener noreferrer">
-                    <Button variant="subtle" state={getActiveStates(p.id).control}>
+                    <Button
+                      variant="subtle"
+                      state={(presence[p.id] ?? { control: "off", live: "off" }).control}
+                    >
                       Control
                     </Button>
                   </Link>
                   <Link href={`/p/${p.id}/live`} target="_blank" rel="noopener noreferrer">
-                    <Button variant="subtle" state={getActiveStates(p.id).live}>
+                    <Button
+                      variant="subtle"
+                      state={(presence[p.id] ?? { control: "off", live: "off" }).live}
+                    >
                       Live
                     </Button>
                   </Link>

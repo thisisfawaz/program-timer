@@ -1,13 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import {
   computeEffectiveItems,
   formatCountdown,
   formatOffset,
 } from "@/lib/schedule";
-import { writeLive } from "@/lib/storage";
+import { writeLive } from "@/lib/live";
 import { useHeartbeat } from "@/lib/useHeartbeat";
 import { HeartbeatDot } from "@/components/HeartbeatDot";
 import { useClock } from "@/lib/useClock";
@@ -39,18 +39,16 @@ export default function LivePage() {
       : null;
 
   /**
-   * The published `running` flag is the authority: an item explicitly started
-   * (via Next/Play/arrow) counts immediately, regardless of whether its
-   * scheduled start time has arrived. We no longer re-derive "started" from the
-   * schedule clock, which previously made a just-started future item show as
-   * waiting/frozen.
+   * useLiveState already derives remaining = anchorMs - now from the shared
+   * anchor, so we display it directly (no extra subtraction, which used to make
+   * the countdown run away). A local tick keeps it smooth between polls.
    */
-  const remainingSec = useMemo(() => {
-    if (live.itemIndex === null) return 0;
-    if (!live.running) return live.remainingSec;
-    const elapsed = (Date.now() - live.updatedAt) / 1000;
-    return live.remainingSec - elapsed;
-  }, [live.itemIndex, live.running, live.remainingSec, live.updatedAt]);
+  const [, forceTick] = useState(0);
+  useEffect(() => {
+    const id2 = window.setInterval(() => forceTick((n) => n + 1), 250);
+    return () => window.clearInterval(id2);
+  }, []);
+  const remainingSec = live.itemIndex === null ? 0 : live.remainingSec;
 
   const red = current !== null && live.itemIndex !== null && remainingSec <= 0;
 
@@ -63,11 +61,14 @@ export default function LivePage() {
       const item = items[index];
       if (!item) return;
       const seconds = item.effectiveDurationMin * 60;
+      // Write the shared anchor shape so every device (and the control engine)
+      // picks it up.
       writeLive(id, {
         itemIndex: index,
-        remainingSec: seconds,
         running: true,
-        updatedAt: Date.now(),
+        anchorMs: Date.now() + seconds * 1000,
+      }).catch(() => {
+        /* ignore */
       });
     },
     [id, items],

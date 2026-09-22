@@ -5,7 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { Program, Recurrence } from "@/lib/types";
 import { TZ_OFFSETS, formatOffset } from "@/lib/schedule";
 import { loadPrograms } from "@/lib/storage";
-import { getActiveStates } from "@/lib/active";
+import { getActiveStates, type ActiveKind, type ActiveState } from "@/lib/active";
 import {
   RECURRENCES,
   currentOccurrence,
@@ -38,6 +38,9 @@ export default function TimersPage() {
 
   const [editing, setEditing] = useState<Program | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [presence, setPresence] = useState<Record<string, Record<ActiveKind, ActiveState>>>(
+    {},
+  );
 
   const refresh = useCallback(async () => {
     try {
@@ -64,6 +67,23 @@ export default function TimersPage() {
       window.removeEventListener("timer-active-changed", refresh);
     };
   }, [refresh]);
+
+  // Presence (control/live) for all listed programs, refreshed periodically.
+  useEffect(() => {
+    let active = true;
+    const loadPresence = async () => {
+      const entries = await Promise.all(
+        programs.map(async (p) => [p.id, await getActiveStates(p.id)] as const),
+      );
+      if (active) setPresence(Object.fromEntries(entries));
+    };
+    if (programs.length > 0) loadPresence();
+    const id = window.setInterval(loadPresence, 5000);
+    return () => {
+      active = false;
+      window.clearInterval(id);
+    };
+  }, [programs]);
 
   const create = async () => {
     const trimmed = name.trim();
@@ -178,7 +198,7 @@ export default function TimersPage() {
           </p>
         ) : (
           programs.map((p) => {
-            const active = getActiveStates(p.id);
+            const active = presence[p.id] ?? { control: "off", live: "off" };
             const anchorDate = p.anchorDate ?? "";
             const anchorTime = p.anchorTime ?? "";
             const rec = p.recurrence ?? "none";

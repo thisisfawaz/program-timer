@@ -46,7 +46,7 @@ export default function ControlPage() {
   const [liveState, setLiveState] = useState<ActiveState>("off");
   useEffect(() => {
     if (!id) return;
-    const refresh = () => setLiveState(getActiveState(id, "live"));
+    const refresh = async () => setLiveState(await getActiveState(id, "live"));
     refresh();
     const t = window.setInterval(refresh, 4000);
     window.addEventListener("timer-active-changed", refresh);

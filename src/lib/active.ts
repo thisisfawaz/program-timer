@@ -1,114 +1,79 @@
 "use client";
 
-/**
- * Presence for control/live, based on an explicit open/closed status — NOT on
- * heartbeat freshness.
- *
- *   - A page writes status "open" while it is mounted (foreground OR
- *     background). Backgrounding a tab must never mark it closed, so we do not
- *     tie "open" to tab visibility or to a fresh timestamp.
- *   - The page writes status "closed" on pagehide/beforeunload, i.e. when it is
- *     actually going away.
- *   - Reader maps: open -> green, closed -> amber, missing -> white.
- *   - Amber decays to white after ACTIVE_DECAY_MS.
- *
- * A page that is force-killed without firing pagehide would stay "open"; that
- * is the deliberate trade-off (better a stale green than a false amber).
- */
+import { useEffect, useState } from "react";
+import { createClient } from "@/lib/supabase/client";
 
 export type ActiveKind = "control" | "live";
 export type ActiveState = "open" | "closed" | "off";
 
-/** Amber (closed) decays to off (white) after this long. */
+/** Heartbeat is "open" (green) if younger than this. */
+export const ACTIVE_FRESH_MS = 20 * 1000;
+/** Older than this decays to "off" (white). */
 export const ACTIVE_DECAY_MS = 5 * 60 * 1000;
 
-const ACTIVE_PREFIX = "timer_active_";
-
-interface KindStatus {
-  status: "open" | "closed";
-  at: number;
+/** Record presence for a kind (called while a page is open). */
+export async function markOpen(programId: string, kind: ActiveKind): Promise<void> {
+  if (!programId) return;
+  const supabase = createClient();
+  await supabase.from("presence").upsert(
+    { program_id: programId, kind, last_seen: new Date().toISOString() },
+    { onConflict: "program_id,kind" },
+  );
 }
 
-interface Stored {
-  control: KindStatus | null;
-  live: KindStatus | null;
+/** Read both kinds' states for a program. */
+export async function getActiveStates(
+  programId: string,
+): Promise<Record<ActiveKind, ActiveState>> {
+  if (!programId) return { control: "off", live: "off" };
+  const supabase = createClient();
+  const { data, error } = await supabase
+    .from("presence")
+    .select("kind, last_seen")
+    .eq("program_id", programId);
+  if (error || !data) return { control: "off", live: "off" };
+  const now = Date.now();
+  const stateFor = (kind: ActiveKind): ActiveState => {
+    const row = (data as { kind: string; last_seen: string }[]).find((r) => r.kind === kind);
+    if (!row) return "off";
+    const age = now - (Date.parse(row.last_seen) || 0);
+    if (age < ACTIVE_FRESH_MS) return "open";
+    if (age < ACTIVE_DECAY_MS) return "closed";
+    return "off";
+  };
+  return { control: stateFor("control"), live: stateFor("live") };
 }
 
-function key(programId: string): string {
-  return ACTIVE_PREFIX + programId;
-}
-
-function readRaw(programId: string): Stored {
-  if (typeof window === "undefined") return { control: null, live: null };
-  try {
-    const raw = window.localStorage.getItem(key(programId));
-    if (!raw) return { control: null, live: null };
-    const p = JSON.parse(raw) as Partial<Record<ActiveKind, KindStatus>>;
-    const parse = (v: unknown): KindStatus | null => {
-      if (!v || typeof v !== "object") return null;
-      const o = v as Record<string, unknown>;
-      if (o.status !== "open" && o.status !== "closed") return null;
-      return {
-        status: o.status,
-        at: typeof o.at === "number" && Number.isFinite(o.at) ? o.at : Date.now(),
-      };
-    };
-    return { control: parse(p.control), live: parse(p.live) };
-  } catch {
-    return { control: null, live: null };
-  }
-}
-
-function writeRaw(programId: string, data: Stored): void {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(key(programId), JSON.stringify(data));
-  window.dispatchEvent(new Event("timer-active-changed"));
-}
-
-function setStatus(
+/** Read a single kind's state. */
+export async function getActiveState(
   programId: string,
   kind: ActiveKind,
-  status: "open" | "closed",
-): void {
-  const data = readRaw(programId);
-  data[kind] = { status, at: Date.now() };
-  writeRaw(programId, data);
+): Promise<ActiveState> {
+  return (await getActiveStates(programId))[kind];
 }
 
-/** Mark a kind open (called on mount). */
-export function markOpen(programId: string, kind: ActiveKind): void {
-  setStatus(programId, kind, "open");
-}
-
-/** Mark a kind closed (called on pagehide/beforeunload). */
-export function markClosed(programId: string, kind: ActiveKind): void {
-  setStatus(programId, kind, "closed");
-}
-
-/** Clear a kind (off/white). */
-export function markOff(programId: string, kind: ActiveKind): void {
-  const data = readRaw(programId);
-  data[kind] = null;
-  writeRaw(programId, data);
-}
-
-/**
- * Resolve three-state: open -> green, closed -> amber, missing/decayed -> off.
- */
-export function getActiveState(programId: string, kind: ActiveKind): ActiveState {
-  const entry = readRaw(programId)[kind];
-  if (!entry) return "off";
-  if (entry.status === "open") return "open";
-  // closed: amber until it decays to off.
-  if (Date.now() - entry.at >= ACTIVE_DECAY_MS) return "off";
-  return "closed";
-}
-
-export function getActiveStates(
+/** Hook: presence states for a program, refreshed on an interval. */
+export function useActiveStates(
   programId: string,
+  pollMs = 5000,
 ): Record<ActiveKind, ActiveState> {
-  return {
-    control: getActiveState(programId, "control"),
-    live: getActiveState(programId, "live"),
-  };
+  const [states, setStates] = useState<Record<ActiveKind, ActiveState>>({
+    control: "off",
+    live: "off",
+  });
+  useEffect(() => {
+    if (!programId) return;
+    let active = true;
+    const refresh = async () => {
+      const next = await getActiveStates(programId);
+      if (active) setStates(next);
+    };
+    refresh();
+    const id = window.setInterval(refresh, pollMs);
+    return () => {
+      active = false;
+      window.clearInterval(id);
+    };
+  }, [programId, pollMs]);
+  return states;
 }
