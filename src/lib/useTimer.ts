@@ -142,12 +142,18 @@ export function useTimer(
         if (!active) return;
         // Ignore our own recent write.
         if (external.updatedAt <= lastPublishedRef.current) return;
-        if (external.itemIndex === itemIndexRef.current) return;
         if (
           external.itemIndex !== null &&
           (external.itemIndex < 0 || external.itemIndex >= itemsRef.current.length)
         )
           return;
+        // Adopt regardless of whether the index changed — Restart / Current time
+        // keep the same index but change the anchor, and must propagate too.
+        const sameAnchor =
+          (external.anchorMs ?? null) === (anchorRef.current ?? null) &&
+          external.running === runningRef.current &&
+          external.itemIndex === itemIndexRef.current;
+        if (sameAnchor) return;
         itemIndexRef.current = external.itemIndex;
         runningRef.current = external.running;
         anchorRef.current = external.running ? external.anchorMs : null;
@@ -209,6 +215,10 @@ export function useTimer(
       return;
     }
 
+    // Schedule-derived: publish the SCHEDULED END as the anchor so every device
+    // computes scheduledEnd - now identically (a null anchor made other devices
+    // show 00:00).
+    const eMs = endMs(idx);
     anchorRef.current = null;
     runningRef.current = true;
     pausedRef.current = 0;
@@ -216,9 +226,8 @@ export function useTimer(
     setRemainingSec(secs);
     setStarted(st);
     setRunning(st);
-    // Schedule-derived: no fixed anchor; publish running with null anchor.
-    publish(idx, st, null);
-  }, [compute, publish, startMs]);
+    publish(idx, st, eMs);
+  }, [compute, publish, startMs, endMs]);
 
   const togglePause = useCallback(() => {
     if (itemIndexRef.current === null) return;
