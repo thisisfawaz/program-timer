@@ -11,7 +11,17 @@ export const ACTIVE_FRESH_MS = 20 * 1000;
 /** Older than this decays to "off" (white). */
 export const ACTIVE_DECAY_MS = 5 * 60 * 1000;
 
-/** Record presence for a kind (called while a page is open). */
+function stateFromRow(
+  row: { last_seen: string; open: boolean } | undefined,
+): ActiveState {
+  if (!row) return "off";
+  const age = Date.now() - (Date.parse(row.last_seen) || 0);
+  if (row.open === false) return age < ACTIVE_DECAY_MS ? "closed" : "off";
+  if (age < ACTIVE_FRESH_MS) return "open";
+  if (age < ACTIVE_DECAY_MS) return "closed";
+  return "off";
+}
+
 export async function markOpen(programId: string, kind: ActiveKind): Promise<void> {
   if (!programId) return;
   const supabase = createClient();
@@ -21,17 +31,20 @@ export async function markOpen(programId: string, kind: ActiveKind): Promise<voi
   );
 }
 
-/** Explicitly mark closed on pagehide so amber shows instantly. */
-export async function markClosed(programId: string, kind: ActiveKind): Promise<void> {
-  if (!programId) return;
-  const supabase = createClient();
-  await supabase.from("presence").upsert(
-    { program_id: programId, kind, last_seen: new Date().toISOString(), open: false },
-    { onConflict: "program_id,kind" },
-  );
+/** Close via a beacon to the server route (survives tab teardown). */
+export function beaconClosed(programId: string, kind: ActiveKind): void {
+  if (!programId || typeof navigator === "undefined" || !navigator.sendBeacon) return;
+  try {
+    const blob = new Blob([JSON.stringify({ programId, kind })], {
+      type: "application/json",
+    });
+    navigator.sendBeacon("/api/presence/close", blob);
+  } catch {
+    /* ignore */
+  }
 }
 
-/** Read both kinds' states for a program. */
+/** Read both kinds' states for a program (one-shot). */
 export async function getActiveStates(
   programId: string,
 ): Promise<Record<ActiveKind, ActiveState>> {
@@ -42,22 +55,14 @@ export async function getActiveStates(
     .select("kind, last_seen, open")
     .eq("program_id", programId);
   if (error || !data) return { control: "off", live: "off" };
-  const now = Date.now();
-  const stateFor = (kind: ActiveKind): ActiveState => {
-    const row = (data as { kind: string; last_seen: string; open: boolean }[]).find(
-      (r) => r.kind === kind,
-    );
-    if (!row) return "off";
-    const age = now - (Date.parse(row.last_seen) || 0);
-    if (row.open === false) return age < ACTIVE_DECAY_MS ? "closed" : "off";
-    if (age < ACTIVE_FRESH_MS) return "open";
-    if (age < ACTIVE_DECAY_MS) return "closed";
-    return "off";
+  const rows = data as { kind: string; last_seen: string; open: boolean }[];
+  return {
+    control: stateFromRow(rows.find((r) => r.kind === "control")),
+    live: stateFromRow(rows.find((r) => r.kind === "live")),
   };
-  return { control: stateFor("control"), live: stateFor("live") };
 }
 
-/** Read a single kind's state. */
+/** Read a single kind's state (one-shot). */
 export async function getActiveState(
   programId: string,
   kind: ActiveKind,
@@ -65,10 +70,10 @@ export async function getActiveState(
   return (await getActiveStates(programId))[kind];
 }
 
-/** Hook: presence states for a program, refreshed on an interval. */
+/** Hook: live presence for a program via Realtime + poll fallback. */
 export function useActiveStates(
   programId: string,
-  pollMs = 5000,
+  pollMs = 15000,
 ): Record<ActiveKind, ActiveState> {
   const [states, setStates] = useState<Record<ActiveKind, ActiveState>>({
     control: "off",
@@ -77,14 +82,28 @@ export function useActiveStates(
   useEffect(() => {
     if (!programId) return;
     let active = true;
+    const supabase = createClient();
+
     const refresh = async () => {
       const next = await getActiveStates(programId);
       if (active) setStates(next);
     };
     refresh();
+
+    // Realtime: react instantly to presence changes (open/close).
+    const channel = supabase
+      .channel(`presence:${programId}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "presence", filter: `program_id=eq.${programId}` },
+        () => refresh(),
+      )
+      .subscribe();
+
     const id = window.setInterval(refresh, pollMs);
     return () => {
       active = false;
+      supabase.removeChannel(channel);
       window.clearInterval(id);
     };
   }, [programId, pollMs]);
