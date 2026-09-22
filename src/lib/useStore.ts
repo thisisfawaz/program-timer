@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import type { LiveState, Program } from "./types";
 import { EMPTY_LIVE, readLive, subscribeLive, type LiveDoc } from "./live";
 
@@ -41,22 +41,8 @@ export function useLiveState(programId: string, pollMs = 1000): LiveState {
     };
   }, [programId, pollMs]);
 
-  // When paused (not running), freeze the displayed time at the moment the
-  // paused state arrived; when running, compute live from the anchor.
-  const [frozenSec, setFrozenSec] = useState<number>(0);
-  const lastAnchorRef = useRef<number | null>(null);
-  useEffect(() => {
-    if (doc.running) {
-      lastAnchorRef.current = doc.anchorMs;
-      return;
-    }
-    // Not running: capture the frozen value once per paused state.
-    if (doc.anchorMs !== null && doc.anchorMs !== lastAnchorRef.current) {
-      lastAnchorRef.current = doc.anchorMs;
-      setFrozenSec((doc.anchorMs - Date.now()) / 1000);
-    }
-  }, [doc.running, doc.anchorMs, doc.updatedAt]);
-
+  // Running: compute from the anchor (ticks). Paused: show the stored paused
+  // value verbatim (frozen) — no math on the read side, so it can't drift to 0.
   return {
     itemIndex: doc.itemIndex,
     running: doc.running,
@@ -64,7 +50,7 @@ export function useLiveState(programId: string, pollMs = 1000): LiveState {
       ? doc.anchorMs !== null
         ? (doc.anchorMs - Date.now()) / 1000
         : 0
-      : frozenSec,
+      : (doc.pausedRemainingSec ?? 0),
     updatedAt: doc.updatedAt,
   };
 }

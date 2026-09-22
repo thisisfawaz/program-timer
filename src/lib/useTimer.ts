@@ -47,18 +47,23 @@ export function useTimer(
   // Track last published updatedAt so we don't adopt our own writes.
   const lastPublishedRef = useRef<number>(0);
 
-  /** Publish current state (the anchor) to Supabase. */
+  /** Publish current state to Supabase (anchor when running, value when paused). */
   const publish = useCallback(
-    (index: number | null, isRunning: boolean, anchorMs: number | null) => {
+    (
+      index: number | null,
+      isRunning: boolean,
+      anchorMs: number | null,
+      pausedRemainingSec: number | null = null,
+    ) => {
       if (!programId) return;
-      const stamp = Date.now();
-      lastPublishedRef.current = stamp;
+      lastPublishedRef.current = Date.now();
       writeLive(programId, {
         itemIndex: index,
         running: isRunning,
         anchorMs,
+        pausedRemainingSec,
       }).catch(() => {
-        /* offline / RLS — ignore; local state still works */
+        /* ignore */
       });
     },
     [programId],
@@ -147,22 +152,15 @@ export function useTimer(
           (external.itemIndex < 0 || external.itemIndex >= itemsRef.current.length)
         )
           return;
-        // Adopt regardless of whether the index changed — Restart / Current time
-        // keep the same index but change the anchor, and must propagate too.
-        const sameAnchor =
-          (external.anchorMs ?? null) === (anchorRef.current ?? null) &&
-          external.running === runningRef.current &&
-          external.itemIndex === itemIndexRef.current;
-        if (sameAnchor) return;
+        // Adopt any external state newer than our last publish. (The old
+        // "sameAnchor" shortcut compared against local refs that are null for
+        // schedule-derived items, which made a device adopt its own echo and
+        // broke Current time.)
         itemIndexRef.current = external.itemIndex;
         runningRef.current = external.running;
         anchorRef.current = external.anchorMs;
-        // If paused (not running) with an anchor, freeze at anchorMs - now so the
-        // paused time shows instead of 00:00. If running, paused value is unused.
-        pausedRef.current =
-          !external.running && external.anchorMs !== null
-            ? (external.anchorMs - Date.now()) / 1000
-            : 0;
+        // Paused: use the stored value. Running: paused value unused.
+        pausedRef.current = !external.running ? (external.pausedRemainingSec ?? 0) : 0;
         setItemIndex(external.itemIndex);
         const { secs, started: st } = compute();
         setRemainingSec(secs);
@@ -205,9 +203,17 @@ export function useTimer(
     const item = itemsRef.current[idx];
     if (!item) return;
 
-    const sMs = startMs(idx);
+    // Compare the REAL clock (in program minutes) against the item's schedule,
+    // instead of reconstructing timestamps from "today's midnight" (which broke
+    // when the program's anchor date/time differed).
     const now = Date.now();
-    if (sMs !== null && now < sMs) {
+    const nowMin =
+      new Date(now + tzRef.current * 3600_000).getUTCHours() * 60 +
+      new Date(now + tzRef.current * 3600_000).getUTCMinutes() +
+      new Date(now + tzRef.current * 3600_000).getUTCSeconds() / 60;
+
+    if (nowMin < item.effectiveStartMin) {
+      // Scheduled start not reached: restart from full duration now.
       const seconds = item.effectiveDurationMin * 60;
       const anchor = now + seconds * 1000;
       anchorRef.current = anchor;
@@ -220,19 +226,18 @@ export function useTimer(
       return;
     }
 
-    // Schedule-derived: publish the SCHEDULED END as the anchor so every device
-    // computes scheduledEnd - now identically (a null anchor made other devices
-    // show 00:00).
-    const eMs = endMs(idx);
-    anchorRef.current = null;
+    // Scheduled start has arrived: snap to the real schedule. Anchor the live
+    // end to (now + scheduledEnd - nowMinutes), so it counts to the scheduled end.
+    const remainingSec = (item.endsAtMin - nowMin) * 60;
+    const anchor = now + remainingSec * 1000;
+    anchorRef.current = anchor;
     runningRef.current = true;
     pausedRef.current = 0;
-    const { secs, started: st } = compute();
-    setRemainingSec(secs);
-    setStarted(st);
-    setRunning(st);
-    publish(idx, st, eMs);
-  }, [compute, publish, startMs, endMs]);
+    setStarted(true);
+    setRunning(true);
+    setRemainingSec(remainingSec);
+    publish(idx, true, anchor);
+  }, [publish]);
 
   const togglePause = useCallback(() => {
     if (itemIndexRef.current === null) return;
@@ -242,20 +247,18 @@ export function useTimer(
       runningRef.current = false;
       // Freeze at "now + remaining" so every device shows the paused time
       // (publishing a null anchor for schedule-derived items showed 00:00).
-      const frozenAnchor = Date.now() + secs * 1000;
-      anchorRef.current = frozenAnchor;
+      anchorRef.current = null;
       setRunning(false);
       setRemainingSec(secs);
-      publish(itemIndexRef.current, false, frozenAnchor);
+      publish(itemIndexRef.current, false, null, secs);
     } else {
       const { secs } = compute();
       runningRef.current = true;
-      // Re-anchor to "now + frozen remaining" and resume.
       const resumeAnchor = Date.now() + secs * 1000;
       anchorRef.current = resumeAnchor;
       setRunning(true);
       setRemainingSec(secs);
-      publish(itemIndexRef.current, true, resumeAnchor);
+      publish(itemIndexRef.current, true, resumeAnchor, null);
     }
     sync();
   }, [compute, publish, sync]);

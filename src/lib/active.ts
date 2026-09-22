@@ -16,7 +16,17 @@ export async function markOpen(programId: string, kind: ActiveKind): Promise<voi
   if (!programId) return;
   const supabase = createClient();
   await supabase.from("presence").upsert(
-    { program_id: programId, kind, last_seen: new Date().toISOString() },
+    { program_id: programId, kind, last_seen: new Date().toISOString(), open: true },
+    { onConflict: "program_id,kind" },
+  );
+}
+
+/** Explicitly mark closed on pagehide so amber shows instantly. */
+export async function markClosed(programId: string, kind: ActiveKind): Promise<void> {
+  if (!programId) return;
+  const supabase = createClient();
+  await supabase.from("presence").upsert(
+    { program_id: programId, kind, last_seen: new Date().toISOString(), open: false },
     { onConflict: "program_id,kind" },
   );
 }
@@ -29,14 +39,17 @@ export async function getActiveStates(
   const supabase = createClient();
   const { data, error } = await supabase
     .from("presence")
-    .select("kind, last_seen")
+    .select("kind, last_seen, open")
     .eq("program_id", programId);
   if (error || !data) return { control: "off", live: "off" };
   const now = Date.now();
   const stateFor = (kind: ActiveKind): ActiveState => {
-    const row = (data as { kind: string; last_seen: string }[]).find((r) => r.kind === kind);
+    const row = (data as { kind: string; last_seen: string; open: boolean }[]).find(
+      (r) => r.kind === kind,
+    );
     if (!row) return "off";
     const age = now - (Date.parse(row.last_seen) || 0);
+    if (row.open === false) return age < ACTIVE_DECAY_MS ? "closed" : "off";
     if (age < ACTIVE_FRESH_MS) return "open";
     if (age < ACTIVE_DECAY_MS) return "closed";
     return "off";
