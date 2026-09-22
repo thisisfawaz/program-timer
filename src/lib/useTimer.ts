@@ -156,8 +156,13 @@ export function useTimer(
         if (sameAnchor) return;
         itemIndexRef.current = external.itemIndex;
         runningRef.current = external.running;
-        anchorRef.current = external.running ? external.anchorMs : null;
-        pausedRef.current = 0;
+        anchorRef.current = external.anchorMs;
+        // If paused (not running) with an anchor, freeze at anchorMs - now so the
+        // paused time shows instead of 00:00. If running, paused value is unused.
+        pausedRef.current =
+          !external.running && external.anchorMs !== null
+            ? (external.anchorMs - Date.now()) / 1000
+            : 0;
         setItemIndex(external.itemIndex);
         const { secs, started: st } = compute();
         setRemainingSec(secs);
@@ -235,16 +240,22 @@ export function useTimer(
       const { secs } = compute();
       pausedRef.current = secs;
       runningRef.current = false;
+      // Freeze at "now + remaining" so every device shows the paused time
+      // (publishing a null anchor for schedule-derived items showed 00:00).
+      const frozenAnchor = Date.now() + secs * 1000;
+      anchorRef.current = frozenAnchor;
       setRunning(false);
-      publish(itemIndexRef.current, false, anchorRef.current);
+      setRemainingSec(secs);
+      publish(itemIndexRef.current, false, frozenAnchor);
     } else {
-      runningRef.current = true;
       const { secs } = compute();
-      if (anchorRef.current !== null) {
-        anchorRef.current = Date.now() + secs * 1000;
-      }
+      runningRef.current = true;
+      // Re-anchor to "now + frozen remaining" and resume.
+      const resumeAnchor = Date.now() + secs * 1000;
+      anchorRef.current = resumeAnchor;
       setRunning(true);
-      publish(itemIndexRef.current, true, anchorRef.current);
+      setRemainingSec(secs);
+      publish(itemIndexRef.current, true, resumeAnchor);
     }
     sync();
   }, [compute, publish, sync]);
