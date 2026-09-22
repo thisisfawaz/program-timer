@@ -115,6 +115,59 @@ export function LocalInput({
   );
 }
 
+/**
+ * A 24-hour HH:MM time field that is identical on every device, regardless of
+ * the OS locale (unlike <input type="time">, which renders 12h or 24h by
+ * locale). Stores and displays "HH:MM" only.
+ */
+export function TimeField({
+  value,
+  onCommit,
+  className = "",
+}: {
+  value: string;
+  onCommit: (next: string) => void;
+  className?: string;
+}) {
+  const [draft, setDraft] = useState(value);
+  const focusedRef = useRef(false);
+
+  useEffect(() => {
+    if (!focusedRef.current) setDraft(value);
+  }, [value]);
+
+  const commit = (raw: string) => {
+    // Accept "H:MM" or "HH:MM" (24h); normalize to "HH:MM".
+    const m = /^(\d{1,2}):(\d{2})$/.exec(raw.trim());
+    if (!m) return;
+    const h = Number(m[1]);
+    const min = Number(m[2]);
+    if (h < 0 || h > 23 || min < 0 || min > 59) return;
+    onCommit(`${String(h).padStart(2, "0")}:${String(min).padStart(2, "0")}`);
+  };
+
+  return (
+    <input
+      value={draft}
+      onChange={(e) => {
+        setDraft(e.target.value);
+        commit(e.target.value);
+      }}
+      onFocus={() => {
+        focusedRef.current = true;
+      }}
+      onBlur={(e) => {
+        focusedRef.current = false;
+        commit(e.target.value);
+        setDraft(value);
+      }}
+      placeholder="HH:MM"
+      inputMode="numeric"
+      className={`tnum w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm text-neutral-100 outline-none placeholder:text-neutral-500 focus:border-indigo-500 ${className}`}
+    />
+  );
+}
+
 export function Select({ className = "", ...props }: SelectHTMLAttributes<HTMLSelectElement>) {
   return (
     <select

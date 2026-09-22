@@ -14,7 +14,7 @@ import {
 import { getOrg } from "@/lib/orgs";
 import { getActiveStates } from "@/lib/active";
 import { createProgram, listOrgPrograms } from "@/lib/programs";
-import { Button, Card, Input, Label, Select } from "@/components/ui";
+import { Button, Card, Input, Label, Select, TimeField } from "@/components/ui";
 import { OrgSettingsPanel } from "@/components/OrgSettingsPanel";
 
 function defaultTime(): string {
@@ -148,7 +148,7 @@ export default function OrgWorkspacePage() {
             </div>
             <div>
               <Label>Time</Label>
-              <Input type="time" value={time} onChange={(e) => setTime(e.target.value)} />
+              <TimeField value={time} onCommit={setTime} />
             </div>
             <div>
               <Label>Recurrence</Label>

@@ -3,7 +3,7 @@
 import { useState } from "react";
 import type { EffectiveItem } from "@/lib/types";
 import { formatDuration, formatMinToTime } from "@/lib/schedule";
-import { Button, LocalInput } from "./ui";
+import { Button, LocalInput, TimeField } from "./ui";
 
 export function ScheduleEditor({
   items,
@@ -99,8 +99,7 @@ export function ScheduleEditor({
                   Start
                 </label>
                 {index === 0 ? (
-                  <LocalInput
-                    type="time"
+                  <TimeField
                     value={item.startTime}
                     onCommit={(v) => onUpdate(index, { startTime: v })}
                   />

@@ -20,7 +20,7 @@ import {
   migrateLocalPrograms,
   updateProgram,
 } from "@/lib/programs";
-import { Button, Card, Input, Label, Select } from "@/components/ui";
+import { Button, Card, Input, Label, Select, TimeField } from "@/components/ui";
 
 function defaultTime(): string {
   return "09:00";
@@ -137,7 +137,7 @@ export default function TimersPage() {
           </div>
           <div>
             <Label>Time</Label>
-            <Input type="time" value={time} onChange={(e) => setTime(e.target.value)} />
+            <TimeField value={time} onCommit={setTime} />
           </div>
           <div>
             <Label>Recurrence</Label>
@@ -290,7 +290,7 @@ function EditProgramModal({
           </div>
           <div>
             <Label>Time</Label>
-            <Input type="time" value={time} onChange={(e) => setTime(e.target.value)} />
+            <TimeField value={time} onCommit={setTime} />
           </div>
           <div>
             <Label>Recurrence</Label>
