@@ -12,6 +12,7 @@ interface ProgramRow {
   anchor_date: string | null;
   anchor_time: string | null;
   recurrence: Recurrence;
+  mode: "A" | "B";
   items: ProgramItem[];
   created_at: string;
 }
@@ -26,6 +27,7 @@ function rowToProgram(row: ProgramRow): Program & { orgId?: string | null } {
     anchorDate: row.anchor_date ?? undefined,
     anchorTime: row.anchor_time ?? undefined,
     recurrence: row.recurrence ?? "none",
+    mode: row.mode === "A" ? "A" : "B",
     orgId: row.org_id,
   };
 }
@@ -99,6 +101,7 @@ export async function createProgram(
       anchor_date: input.anchorDate ?? null,
       anchor_time: input.anchorTime ?? null,
       recurrence: input.recurrence ?? "none",
+      mode: "B",
       items: input.items ?? [],
     })
     .select("*")
@@ -117,6 +120,7 @@ export async function updateProgram(program: Program): Promise<void> {
       anchor_date: program.anchorDate ?? null,
       anchor_time: program.anchorTime ?? null,
       recurrence: program.recurrence ?? "none",
+      mode: program.mode ?? "B",
       items: program.items,
     })
     .eq("id", program.id);

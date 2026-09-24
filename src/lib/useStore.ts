@@ -1,18 +1,17 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { LiveState, Program } from "./types";
+import type { Program } from "./types";
 import { EMPTY_LIVE, readLive, subscribeLive, type LiveDoc } from "./live";
 
 type ProgramWithOrg = Program & { orgId?: string | null };
 
 /**
- * Subscribe to the shared live channel for a program (Supabase-backed). Updates
- * via realtime push, with a polling fallback so it works even if realtime
- * isn't available. Cross-device: any device viewing a program sees the same
- * running state.
+ * Subscribe to the shared live doc for a program (Supabase-backed). Realtime
+ * push with a polling fallback. Cross-device: any device viewing a program sees
+ * the same mode, selection, clocks, and paused state.
  */
-export function useLiveState(programId: string, pollMs = 1000): LiveState {
+export function useLiveState(programId: string, pollMs = 1000): LiveDoc {
   const [doc, setDoc] = useState<LiveDoc>(EMPTY_LIVE);
 
   useEffect(() => {
@@ -41,18 +40,7 @@ export function useLiveState(programId: string, pollMs = 1000): LiveState {
     };
   }, [programId, pollMs]);
 
-  // Running: compute from the anchor (ticks). Paused: show the stored paused
-  // value verbatim (frozen) — no math on the read side, so it can't drift to 0.
-  return {
-    itemIndex: doc.itemIndex,
-    running: doc.running,
-    remainingSec: doc.running
-      ? doc.anchorMs !== null
-        ? (doc.anchorMs - Date.now()) / 1000
-        : 0
-      : (doc.pausedRemainingSec ?? 0),
-    updatedAt: doc.updatedAt,
-  };
+  return doc;
 }
 
 /** Notify subscribers that a program changed in the database. */

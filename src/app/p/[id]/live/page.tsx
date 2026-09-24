@@ -2,12 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
-import {
-  computeEffectiveItems,
-  formatCountdown,
-  formatOffset,
-} from "@/lib/schedule";
-import { writeLive } from "@/lib/live";
+import { computeEffectiveItems, formatCountdown, formatOffset } from "@/lib/schedule";
+import { readLive, writeLive } from "@/lib/live";
 import { useHeartbeat } from "@/lib/useHeartbeat";
 import { HeartbeatDot } from "@/components/HeartbeatDot";
 import { useClock } from "@/lib/useClock";
@@ -17,12 +13,10 @@ export default function LivePage() {
   const params = useParams<{ id: string }>();
   const id = params?.id ?? "";
   const program = useProgram(id);
-  const live = useLiveState(id, 250);
+  const live = useLiveState(id, 500);
 
   const tzOffset = program?.tzOffset ?? 0;
   const clock = useClock(tzOffset);
-
-  // While this page is open, keep the live heartbeat alive.
   useHeartbeat(id, "live");
 
   const items = useMemo(
@@ -38,38 +32,39 @@ export default function LivePage() {
       ? items[live.itemIndex + 1]
       : null;
 
-  /**
-   * useLiveState already derives remaining = anchorMs - now from the shared
-   * anchor, so we display it directly (no extra subtraction, which used to make
-   * the countdown run away). A local tick keeps it smooth between polls.
-   */
+  // Smooth local tick.
   const [, forceTick] = useState(0);
   useEffect(() => {
-    const id2 = window.setInterval(() => forceTick((n) => n + 1), 250);
-    return () => window.clearInterval(id2);
+    const t = window.setInterval(() => forceTick((n) => n + 1), 250);
+    return () => window.clearInterval(t);
   }, []);
-  const remainingSec = live.itemIndex === null ? 0 : live.remainingSec;
 
-  const red = current !== null && live.itemIndex !== null && remainingSec <= 0;
+  // Remaining time, derived from the SAME live doc the Control view publishes:
+  // paused seconds if paused, otherwise the item's clock anchor (its end time).
+  // Mirrors Control exactly, so both screens always agree.
+  const remainingSec = useMemo(() => {
+    if (live.itemIndex === null || !current) return 0;
+    const idx = live.itemIndex;
+    if (live.paused[idx] !== undefined) return live.paused[idx];
+    const anchor = live.clocks[idx];
+    if (anchor === undefined) return current.effectiveDurationMin * 60;
+    return (anchor - Date.now()) / 1000;
+  }, [live.itemIndex, live.clocks, live.paused, current]);
 
-  /**
-   * Select an item from the fullscreen page and restart it (full effective
-   * duration from now), matching the control view's navigation behavior.
-   */
-  const selectItem = useCallback(
-    (index: number) => {
+  const red = current !== null && remainingSec <= 0;
+
+  /** Write a selection to the shared doc (arrows). */
+  const writeSelection = useCallback(
+    async (index: number) => {
+      const doc = await readLive(id).catch(() => null);
+      const clocks = doc?.clocks ?? {};
+      const paused = doc?.paused ?? {};
+      // In Mode B, entering an item with no clock starts it fresh.
       const item = items[index];
-      if (!item) return;
-      const seconds = item.effectiveDurationMin * 60;
-      // Write the shared anchor shape so every device (and the control engine)
-      // picks it up.
-      writeLive(id, {
-        itemIndex: index,
-        running: true,
-        anchorMs: Date.now() + seconds * 1000,
-      }).catch(() => {
-        /* ignore */
-      });
+      if (item && clocks[index] === undefined && paused[index] === undefined) {
+        clocks[index] = Date.now() + item.effectiveDurationMin * 60_000;
+      }
+      writeLive(id, { itemIndex: index, clocks, paused }).catch(() => {});
     },
     [id, items],
   );
@@ -77,24 +72,21 @@ export default function LivePage() {
   const goPrev = useCallback(() => {
     const idx = live.itemIndex;
     if (idx === null) {
-      // Nothing selected yet: enter at the first item.
-      if (items.length > 0) selectItem(0);
+      if (items.length > 0) writeSelection(0);
       return;
     }
-    if (idx > 0) selectItem(idx - 1);
-  }, [live.itemIndex, items.length, selectItem]);
+    if (idx > 0) writeSelection(idx - 1);
+  }, [live.itemIndex, items.length, writeSelection]);
 
   const goNext = useCallback(() => {
     const idx = live.itemIndex;
     if (idx === null) {
-      // Nothing selected yet: enter at the first item.
-      if (items.length > 0) selectItem(0);
+      if (items.length > 0) writeSelection(0);
       return;
     }
-    if (idx + 1 < items.length) selectItem(idx + 1);
-  }, [live.itemIndex, items.length, selectItem]);
+    if (idx + 1 < items.length) writeSelection(idx + 1);
+  }, [live.itemIndex, items.length, writeSelection]);
 
-  // Up/Down and Left/Right arrow keys change items.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "ArrowUp" || e.key === "ArrowLeft") {
@@ -141,11 +133,6 @@ export default function LivePage() {
         >
           {current ? formatCountdown(remainingSec) : "--:--"}
         </p>
-        {red && (
-          <p className="text-lg font-medium text-red-400">
-            Time is up — restart from the control screen.
-          </p>
-        )}
         <p className="min-h-[1.25rem] text-xs uppercase tracking-widest text-white/40">
           {next ? next.name : "\u00A0"}
         </p>
@@ -175,7 +162,7 @@ export default function LivePage() {
 
       <footer className="flex items-center justify-between px-8 py-6 text-xs uppercase tracking-widest text-white/50">
         <span>{formatOffset(program.tzOffset)}</span>
-        {red && <span className="text-red-400">Item past its scheduled time</span>}
+        <span>{program.mode === "A" ? "End on time" : "Full duration"}</span>
         <span>{items.length} items</span>
       </footer>
     </main>

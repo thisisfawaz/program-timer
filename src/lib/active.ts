@@ -6,20 +6,20 @@ import { createClient } from "@/lib/supabase/client";
 export type ActiveKind = "control" | "live";
 export type ActiveState = "open" | "closed" | "off";
 
-/** Heartbeat is "open" (green) if younger than this. */
-export const ACTIVE_FRESH_MS = 20 * 1000;
-/** Older than this decays to "off" (white). */
+/** Older than this after an explicit close decays to "off" (white). */
 export const ACTIVE_DECAY_MS = 5 * 60 * 1000;
 
 function stateFromRow(
   row: { last_seen: string; open: boolean } | undefined,
 ): ActiveState {
   if (!row) return "off";
+  // Green is driven purely by the explicit open flag: as long as the page is
+  // open (even backgrounded), it stays green. It only leaves green when a
+  // close beacon sets open=false.
+  if (row.open) return "open";
   const age = Date.now() - (Date.parse(row.last_seen) || 0);
-  if (row.open === false) return age < ACTIVE_DECAY_MS ? "closed" : "off";
-  if (age < ACTIVE_FRESH_MS) return "open";
-  if (age < ACTIVE_DECAY_MS) return "closed";
-  return "off";
+  // Explicitly closed → amber, decaying to white after 5 minutes.
+  return age < ACTIVE_DECAY_MS ? "closed" : "off";
 }
 
 export async function markOpen(programId: string, kind: ActiveKind): Promise<void> {

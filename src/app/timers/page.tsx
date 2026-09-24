@@ -21,6 +21,7 @@ import {
   updateProgram,
 } from "@/lib/programs";
 import { Button, Card, Input, Label, Select, TimeField } from "@/components/ui";
+import { ProgramActions } from "@/components/ProgramActions";
 
 function defaultTime(): string {
   return "09:00";
@@ -78,7 +79,7 @@ export default function TimersPage() {
       if (active) setPresence(Object.fromEntries(entries));
     };
     if (programs.length > 0) loadPresence();
-    const id = window.setInterval(loadPresence, 5000);
+    const id = window.setInterval(loadPresence, 1500);
     return () => {
       active = false;
       window.clearInterval(id);
@@ -235,15 +236,11 @@ export default function TimersPage() {
                       Live
                     </Button>
                   </Link>
-                  <Button variant="ghost" onClick={() => setEditing(p)}>
-                    Edit
-                  </Button>
-                  <Button variant="ghost" onClick={() => duplicate(p.id)}>
-                    Duplicate
-                  </Button>
-                  <Button variant="ghost" onClick={() => remove(p.id)}>
-                    Delete
-                  </Button>
+                  <ProgramActions
+                    onEdit={() => setEditing(p)}
+                    onDuplicate={() => duplicate(p.id)}
+                    onDelete={() => remove(p.id)}
+                  />
                 </div>
               </Card>
             );

@@ -25,6 +25,8 @@ export interface Program {
   anchorTime?: string;
   /** Recurrence of this program. */
   recurrence?: Recurrence;
+  /** Timing mode: 'A' = end on time (schedule-locked), 'B' = by duration. */
+  mode?: "A" | "B";
 }
 
 export interface EffectiveItem extends ProgramItem {

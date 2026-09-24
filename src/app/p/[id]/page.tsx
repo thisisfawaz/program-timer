@@ -37,7 +37,7 @@ export default function ControlPage() {
     [program?.items],
   );
 
-  const timer = useTimer(id, items, tzOffset);
+  const timer = useTimer(id, items, tzOffset, program?.mode ?? "B");
 
   // While this page is open, keep the control heartbeat alive.
   useHeartbeat(id, "control");
@@ -48,7 +48,7 @@ export default function ControlPage() {
     if (!id) return;
     const refresh = async () => setLiveState(await getActiveState(id, "live"));
     refresh();
-    const t = window.setInterval(refresh, 4000);
+    const t = window.setInterval(refresh, 1500);
     window.addEventListener("timer-active-changed", refresh);
     window.addEventListener("storage", refresh);
     return () => {
@@ -165,7 +165,7 @@ export default function ControlPage() {
     if (playingId) {
       const newIndex = next.findIndex((it) => it.id === playingId);
       if (newIndex >= 0 && newIndex !== timer.itemIndex) {
-        timer.start(newIndex);
+        timer.select(newIndex);
       }
     }
   };
@@ -175,14 +175,17 @@ export default function ControlPage() {
       i === index ? { ...it, addedMin: it.addedMin + minutes } : it,
     );
     persistItems(next);
-    if (timer.itemIndex === index) timer.addMinutes(minutes);
   };
 
   const resetAdded = (index: number) => {
-    const delta = -items[index].addedMin;
     const next = items.map((it, i) => (i === index ? { ...it, addedMin: 0 } : it));
     persistItems(next);
-    if (timer.itemIndex === index) timer.addMinutes(delta);
+  };
+
+  /** Persist a mode change on the program. */
+  const setMode = (m: "A" | "B") => {
+    timer.setMode(m);
+    if (program) updateProgram({ ...program, mode: m }).then(emitProgramChanged);
   };
 
   const setTz = (offset: number) => {
@@ -196,11 +199,8 @@ export default function ControlPage() {
     timer.itemIndex !== null ? (items[timer.itemIndex] ?? null) : null;
   const hasNext = timer.itemIndex !== null && timer.itemIndex + 1 < items.length;
 
-  // Red when the real program clock has already passed this item's scheduled end,
-  // regardless of when it was played, or when the countdown itself went negative.
-  const currentPastByClock = current !== null && current.endsAtMin <= nowMin;
-  const currentRed =
-    current !== null && timer.started && (currentPastByClock || timer.overtime);
+  // The engine decides red (remaining <= 0).
+  const currentRed = timer.red;
 
   const programEnd = items.length ? items[items.length - 1].endsAtMin : null;
   const programStart = items.length ? items[0].effectiveStartMin : null;
@@ -287,18 +287,19 @@ export default function ControlPage() {
       <TimerPanel
         current={current}
         remainingSec={timer.remainingSec}
-        started={timer.started}
         running={timer.running}
-        red={currentRed}
+        paused={timer.paused}
+        red={timer.red}
+        mode={timer.mode}
+        newEndMin={timer.newEndMin}
+        onSetMode={setMode}
         onTogglePause={timer.togglePause}
         onRestart={timer.restart}
-        onCurrentTime={timer.currentTime}
         onStop={timer.stop}
-        onAddMinutes={timer.addMinutes}
-        onPickNext={() => {
-          if (timer.itemIndex !== null && hasNext) playItem(timer.itemIndex + 1);
-        }}
-        hasNext={hasNext}
+        onPrev={timer.prev}
+        onNext={timer.next}
+        hasPrev={timer.itemIndex !== null && timer.itemIndex > 0}
+        hasNext={timer.itemIndex !== null && timer.itemIndex + 1 < items.length}
       />
 
       <section className="flex flex-col gap-4">

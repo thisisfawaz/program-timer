@@ -13,7 +13,14 @@ import {
 } from "@/lib/recurrence";
 import { getOrg } from "@/lib/orgs";
 import { getActiveStates, type ActiveKind, type ActiveState } from "@/lib/active";
-import { createProgram, listOrgPrograms } from "@/lib/programs";
+import {
+  createProgram,
+  deleteProgramById,
+  duplicateProgramById,
+  listOrgPrograms,
+  updateProgram,
+} from "@/lib/programs";
+import { ProgramActions } from "@/components/ProgramActions";
 import { Button, Card, Input, Label, Select, TimeField } from "@/components/ui";
 import { OrgSettingsPanel } from "@/components/OrgSettingsPanel";
 
@@ -43,6 +50,7 @@ export default function OrgWorkspacePage() {
   const [recurrence, setRecurrence] = useState<Recurrence>("none");
   const [tzOffset, setTzOffset] = useState(0);
   const [busy, setBusy] = useState(false);
+  const [editing, setEditing] = useState<Program | null>(null);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -71,7 +79,7 @@ export default function OrgWorkspacePage() {
       if (active) setPresence(Object.fromEntries(entries));
     };
     if (programs.length > 0) loadPresence();
-    const t = window.setInterval(loadPresence, 5000);
+    const t = window.setInterval(loadPresence, 1500);
     return () => {
       active = false;
       window.clearInterval(t);
@@ -91,6 +99,24 @@ export default function OrgWorkspacePage() {
       setError(e instanceof Error ? e.message : "Could not create program");
       setBusy(false);
     }
+  };
+
+  const remove = async (programId: string) => {
+    if (!window.confirm("Delete this program? This cannot be undone.")) return;
+    await deleteProgramById(programId);
+    await load();
+  };
+
+  const duplicate = async (programId: string) => {
+    if (!window.confirm("Duplicate this program?")) return;
+    await duplicateProgramById(programId);
+    await load();
+  };
+
+  const saveEdit = async (updated: Program) => {
+    await updateProgram(updated);
+    setEditing(null);
+    await load();
   };
 
   if (error) {
@@ -230,6 +256,11 @@ export default function OrgWorkspacePage() {
                       Live
                     </Button>
                   </Link>
+                  <ProgramActions
+                    onEdit={() => setEditing(p)}
+                    onDuplicate={() => duplicate(p.id)}
+                    onDelete={() => remove(p.id)}
+                  />
                 </div>
               </Card>
             );
@@ -238,6 +269,101 @@ export default function OrgWorkspacePage() {
       </section>
         </>
       )}
+
+      {editing && (
+        <EditProgramModal
+          program={editing}
+          onCancel={() => setEditing(null)}
+          onSave={saveEdit}
+        />
+      )}
     </main>
+  );
+}
+
+function EditProgramModal({
+  program,
+  onCancel,
+  onSave,
+}: {
+  program: Program;
+  onCancel: () => void;
+  onSave: (updated: Program) => void;
+}) {
+  const [name, setName] = useState(program.name);
+  const [tzOffset, setTzOffset] = useState(program.tzOffset);
+  const [date, setDate] = useState(program.anchorDate ?? todayInOffset(program.tzOffset));
+  const [time, setTime] = useState(program.anchorTime ?? defaultTime());
+  const [recurrence, setRecurrence] = useState<Recurrence>(program.recurrence ?? "none");
+
+  const save = () => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    if (!window.confirm("Save changes to this program?")) return;
+    const items = program.items.map((it, i) =>
+      i === 0 ? { ...it, startTime: time } : it,
+    );
+    onSave({
+      ...program,
+      name: trimmed,
+      tzOffset,
+      anchorDate: date,
+      anchorTime: time,
+      recurrence,
+      items,
+    });
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+      <div className="w-full max-w-lg rounded-2xl border border-neutral-800 bg-neutral-900 p-6">
+        <h2 className="mb-4 text-lg font-medium">Edit program</h2>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div className="sm:col-span-2">
+            <Label>Name</Label>
+            <Input value={name} onChange={(e) => setName(e.target.value)} />
+          </div>
+          <div>
+            <Label>Date</Label>
+            <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+          </div>
+          <div>
+            <Label>Time</Label>
+            <TimeField value={time} onCommit={setTime} />
+          </div>
+          <div>
+            <Label>Recurrence</Label>
+            <Select
+              value={recurrence}
+              onChange={(e) => setRecurrence(e.target.value as Recurrence)}
+            >
+              {RECURRENCES.map((r) => (
+                <option key={r.value} value={r.value}>
+                  {r.label}
+                </option>
+              ))}
+            </Select>
+          </div>
+          <div>
+            <Label>Timezone offset</Label>
+            <Select value={tzOffset} onChange={(e) => setTzOffset(Number(e.target.value))}>
+              {TZ_OFFSETS.map((o) => (
+                <option key={o} value={o}>
+                  {formatOffset(o)}
+                </option>
+              ))}
+            </Select>
+          </div>
+        </div>
+        <div className="mt-6 flex justify-end gap-2">
+          <Button variant="ghost" onClick={onCancel}>
+            Cancel
+          </Button>
+          <Button variant="primary" onClick={save} disabled={!name.trim()}>
+            Save
+          </Button>
+        </div>
+      </div>
+    </div>
   );
 }

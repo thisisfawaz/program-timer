@@ -4,35 +4,42 @@ import { createClient } from "@/lib/supabase/client";
 
 export interface LiveDoc {
   itemIndex: number | null;
-  running: boolean;
-  /** Wall-clock ms when the current countdown ends (null when stopped/idle). */
-  anchorMs: number | null;
-  /** Frozen seconds shown while paused (null when not paused). */
-  pausedRemainingSec: number | null;
+  mode: "A" | "B";
+  /** Per-item end clock (ms). */
+  clocks: Record<number, number>;
+  /** Per-item paused remaining (seconds). */
+  paused: Record<number, number>;
+  /** Mode A: per-item actual elapsed minutes, settled when passed forward. */
+  overruns: Record<number, number>;
   updatedAt: number;
 }
 
 export const EMPTY_LIVE: LiveDoc = {
   itemIndex: null,
-  running: false,
-  anchorMs: null,
-  pausedRemainingSec: null,
+  mode: "A",
+  clocks: {},
+  paused: {},
+  overruns: {},
   updatedAt: 0,
 };
 
+function asMap(v: unknown): Record<number, number> {
+  return (v && typeof v === "object" ? v : {}) as Record<number, number>;
+}
+
 function rowToDoc(row: {
   item_index: number | null;
-  running: boolean;
-  anchor_ms: number | null;
-  paused_remaining_sec: number | null;
+  clocks: unknown;
+  paused: unknown;
+  overruns: unknown;
   updated_at: string;
 }): LiveDoc {
   return {
     itemIndex: row.item_index ?? null,
-    running: row.running === true,
-    anchorMs: typeof row.anchor_ms === "number" ? row.anchor_ms : null,
-    pausedRemainingSec:
-      typeof row.paused_remaining_sec === "number" ? row.paused_remaining_sec : null,
+    mode: "A",
+    clocks: asMap(row.clocks),
+    paused: asMap(row.paused),
+    overruns: asMap(row.overruns),
     updatedAt: Date.parse(row.updated_at) || 0,
   };
 }
@@ -41,7 +48,7 @@ export async function readLive(programId: string): Promise<LiveDoc> {
   const supabase = createClient();
   const { data, error } = await supabase
     .from("live_state")
-    .select("item_index, running, anchor_ms, paused_remaining_sec, updated_at")
+    .select("item_index, clocks, paused, overruns, updated_at")
     .eq("program_id", programId)
     .maybeSingle();
   if (error) throw error;
@@ -51,16 +58,16 @@ export async function readLive(programId: string): Promise<LiveDoc> {
 
 export async function writeLive(
   programId: string,
-  doc: Partial<LiveDoc>,
+  doc: Partial<Pick<LiveDoc, "itemIndex" | "clocks" | "paused" | "overruns">>,
 ): Promise<void> {
   const supabase = createClient();
   const { error } = await supabase.from("live_state").upsert(
     {
       program_id: programId,
       item_index: doc.itemIndex ?? null,
-      running: doc.running ?? false,
-      anchor_ms: doc.anchorMs ?? null,
-      paused_remaining_sec: doc.pausedRemainingSec ?? null,
+      clocks: doc.clocks ?? {},
+      paused: doc.paused ?? {},
+      overruns: doc.overruns ?? {},
       updated_at: new Date().toISOString(),
     },
     { onConflict: "program_id" },
