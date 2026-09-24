@@ -16,7 +16,7 @@ export function useHeartbeat(programId: string, kind: ActiveKind): void {
       markOpen(programId, kind).catch(() => {});
     };
     beat();
-    const id = window.setInterval(beat, 8000);
+    const id = window.setInterval(beat, 3000);
     const onVisible = () => {
       if (document.visibilityState === "visible") beat();
     };

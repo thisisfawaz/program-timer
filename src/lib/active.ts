@@ -8,17 +8,18 @@ export type ActiveState = "open" | "closed" | "off";
 
 /** Older than this after an explicit close decays to "off" (white). */
 export const ACTIVE_DECAY_MS = 5 * 60 * 1000;
+/** If an "open" session goes silent this long, treat it as closed. */
+export const ACTIVE_STALE_MS = 6 * 1000;
 
 function stateFromRow(
   row: { last_seen: string; open: boolean } | undefined,
 ): ActiveState {
   if (!row) return "off";
-  // Green is driven purely by the explicit open flag: as long as the page is
-  // open (even backgrounded), it stays green. It only leaves green when a
-  // close beacon sets open=false.
-  if (row.open) return "open";
   const age = Date.now() - (Date.parse(row.last_seen) || 0);
-  // Explicitly closed → amber, decaying to white after 5 minutes.
+  // Open, but only while the heartbeat is fresh. A closed/killed page (mobile
+  // tabs often fire no close event) stops beating, so it goes amber quickly.
+  if (row.open && age < ACTIVE_STALE_MS) return "open";
+  // Closed (explicitly or by silence) → amber, decaying to white after 5 min.
   return age < ACTIVE_DECAY_MS ? "closed" : "off";
 }
 
