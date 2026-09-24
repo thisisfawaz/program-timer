@@ -29,6 +29,7 @@ function asMap(v: unknown): Record<number, number> {
 
 function rowToDoc(row: {
   item_index: number | null;
+  mode?: string | null;
   clocks: unknown;
   paused: unknown;
   overruns: unknown;
@@ -36,7 +37,7 @@ function rowToDoc(row: {
 }): LiveDoc {
   return {
     itemIndex: row.item_index ?? null,
-    mode: "A",
+    mode: row.mode === "B" ? "B" : "A",
     clocks: asMap(row.clocks),
     paused: asMap(row.paused),
     overruns: asMap(row.overruns),
@@ -48,7 +49,7 @@ export async function readLive(programId: string): Promise<LiveDoc> {
   const supabase = createClient();
   const { data, error } = await supabase
     .from("live_state")
-    .select("item_index, clocks, paused, overruns, updated_at")
+    .select("item_index, mode, clocks, paused, overruns, updated_at")
     .eq("program_id", programId)
     .maybeSingle();
   if (error) throw error;
@@ -58,13 +59,14 @@ export async function readLive(programId: string): Promise<LiveDoc> {
 
 export async function writeLive(
   programId: string,
-  doc: Partial<Pick<LiveDoc, "itemIndex" | "clocks" | "paused" | "overruns">>,
+  doc: Partial<Pick<LiveDoc, "itemIndex" | "mode" | "clocks" | "paused" | "overruns">>,
 ): Promise<void> {
   const supabase = createClient();
   const { error } = await supabase.from("live_state").upsert(
     {
       program_id: programId,
       item_index: doc.itemIndex ?? null,
+      mode: doc.mode ?? "A",
       clocks: doc.clocks ?? {},
       paused: doc.paused ?? {},
       overruns: doc.overruns ?? {},

@@ -162,7 +162,7 @@ export default function LivePage() {
 
       <footer className="flex items-center justify-between px-8 py-6 text-xs uppercase tracking-widest text-white/50">
         <span>{formatOffset(program.tzOffset)}</span>
-        <span>{program.mode === "A" ? "End on time" : "Full duration"}</span>
+        <span>{live.mode === "A" ? "End on time" : "Full duration"}</span>
         <span>{items.length} items</span>
       </footer>
     </main>

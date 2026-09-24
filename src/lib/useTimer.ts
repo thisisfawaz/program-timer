@@ -82,6 +82,7 @@ export function useTimer(
     );
     writeLive(programId, {
       itemIndex: itemIndexRef.current,
+      mode: modeRef.current,
       clocks: clocksRef.current,
       paused: pausedRef.current,
       overruns: overrunsRef.current,
@@ -146,6 +147,10 @@ export function useTimer(
         clocksRef.current = ext.clocks ?? {};
         pausedRef.current = ext.paused ?? {};
         overrunsRef.current = ext.overruns ?? {};
+        if (ext.mode && ext.mode !== modeRef.current) {
+          modeRef.current = ext.mode;
+          setModeState(ext.mode);
+        }
         if (ext.itemIndex !== itemIndexRef.current) {
           itemIndexRef.current = ext.itemIndex;
           setItemIndex(ext.itemIndex);
@@ -278,10 +283,14 @@ export function useTimer(
     publish();
   }, [publish]);
 
-  const setMode = useCallback((m: "A" | "B") => {
-    setModeState(m);
-    modeRef.current = m;
-  }, []);
+  const setMode = useCallback(
+    (m: "A" | "B") => {
+      setModeState(m);
+      modeRef.current = m;
+      publish();
+    },
+    [publish],
+  );
 
   const remainingSec = itemIndex !== null ? remainingFor(itemIndex) : 0;
   const paused = itemIndex !== null && pausedRef.current[itemIndex] !== undefined;
