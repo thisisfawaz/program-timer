@@ -160,15 +160,10 @@ export function useTimer(
       try {
         const ext = await readLive(programId);
         if (!active) return;
-        // Ignore our own echo: if the remote doc matches what we last published,
-        // don't clobber local state (which was causing buttons to be overwritten).
-        const sig = signature(ext.itemIndex, ext.clocks ?? {}, ext.overruns ?? {});
-        if (sig === lastSentSigRef.current) return;
-        // Ignore remote docs older than or equal to our last local action —
-        // otherwise a write that hasn't landed yet reverts the press we just
-        // made (the "have to press Next twice" glitch). Using <= also handles
-        // the case where the remote state is our own echo.
-        if (ext.updatedAt && ext.updatedAt <= lastLocalActionRef.current) return;
+        // Adopt any remote doc that is NEWER than the last state we published.
+        // (The signature check was unreliable: a remote write could look like
+        // our own echo and get skipped, so Live could never drive Control.)
+        if (ext.updatedAt && ext.updatedAt < lastPublishedRef.current) return;
         clocksRef.current = ext.clocks ?? {};
         pausedRef.current = ext.paused ?? {};
         // The updatedAt check above already protects us from stale remote docs
@@ -193,7 +188,7 @@ export function useTimer(
       active = false;
       window.clearInterval(id);
     };
-  }, [programId, signature]);
+  }, [programId]);
 
   /**
    * Give an item a clock if it doesn't have one yet.

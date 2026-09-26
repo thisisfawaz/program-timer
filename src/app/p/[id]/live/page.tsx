@@ -6,8 +6,9 @@ import { computeEffectiveItems, formatCountdown, formatOffset } from "@/lib/sche
 import { useHeartbeat } from "@/lib/useHeartbeat";
 import { HeartbeatDot } from "@/components/HeartbeatDot";
 import { useClock } from "@/lib/useClock";
-import { useProgram } from "@/lib/useStore";
-import { useTimer } from "@/lib/useTimer";
+import { useLiveState, useProgram } from "@/lib/useStore";
+import { readLive, writeLive } from "@/lib/live";
+import { moveTo, type TimerState } from "@/lib/timerCore";
 
 export default function LivePage() {
   const params = useParams<{ id: string }>();
@@ -23,47 +24,79 @@ export default function LivePage() {
     [program?.items],
   );
 
-  const timer = useTimer(id, items, tzOffset, program?.mode ?? "B");
+  // Live is a mirror of the shared live doc that Control publishes, so the
+  // displayed countdown is always identical to Control. The arrows below move
+  // the timer by running the SAME shared move logic Control uses (timerCore)
+  // on the published doc, then writing the result back — so a move from Live
+  // changes Control the correct way, with no second timer.
+  const live = useLiveState(id, 500);
 
-  const current = timer.itemIndex !== null ? (items[timer.itemIndex] ?? null) : null;
-  const previous =
-    timer.itemIndex !== null && timer.itemIndex > 0 ? items[timer.itemIndex - 1] : null;
-  const nextItem =
-    timer.itemIndex !== null && timer.itemIndex + 1 < items.length
-      ? items[timer.itemIndex + 1]
-      : null;
+  const idx = live.itemIndex;
+  const current = idx !== null ? (items[idx] ?? null) : null;
+  const previous = idx !== null && idx > 0 ? items[idx - 1] : null;
+  const nextItem = idx !== null && idx + 1 < items.length ? items[idx + 1] : null;
 
-  // Smooth local tick.
+  // Smooth local tick so the countdown updates between published changes.
   const [, forceTick] = useState(0);
   useEffect(() => {
     const t = window.setInterval(() => forceTick((n) => n + 1), 250);
     return () => window.clearInterval(t);
   }, []);
 
-  const remainingSec = timer.remainingSec;
-  const red = timer.red;
+  // Remaining = paused value if paused, otherwise the published clock − now.
+  // Control already baked modes/overruns into the clock it published, so the
+  // mirror simply counts down to it — identical to Control by construction.
+  const remainingSec = useMemo(() => {
+    if (idx === null) return 0;
+    if (live.paused[idx] !== undefined) return live.paused[idx];
+    const anchor = live.clocks[idx];
+    if (anchor === undefined) return 0;
+    return (anchor - Date.now()) / 1000;
+  }, [idx, live.paused, live.clocks]);
 
-  const goPrev = useCallback(() => {
-    timer.prev();
-  }, [timer]);
+  const red = idx !== null && remainingSec <= 0;
 
-  const goNext = useCallback(() => {
-    timer.next();
-  }, [timer]);
+  // Move the shared timer by one item, using the same logic as Control.
+  const moveBy = useCallback(
+    async (delta: number) => {
+      if (!id) return;
+      const doc = await readLive(id).catch(() => null);
+      const state: TimerState = {
+        itemIndex: doc?.itemIndex ?? null,
+        mode: doc?.mode ?? (program?.mode ?? "B"),
+        clocks: doc?.clocks ?? {},
+        paused: doc?.paused ?? {},
+        overruns: doc?.overruns ?? {},
+      };
+      const target =
+        state.itemIndex === null ? 0 : state.itemIndex + delta;
+      if (target < 0 || target >= items.length) return;
+      const next = moveTo(items, state, target, tzOffset);
+      await writeLive(id, {
+        itemIndex: next.itemIndex,
+        mode: next.mode,
+        clocks: next.clocks,
+        paused: next.paused,
+        overruns: next.overruns,
+      }).catch(() => {});
+    },
+    [id, items, tzOffset, program?.mode],
+  );
 
+  // Keyboard arrows mirror the buttons.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "ArrowUp" || e.key === "ArrowLeft") {
         e.preventDefault();
-        goPrev();
+        moveBy(-1);
       } else if (e.key === "ArrowDown" || e.key === "ArrowRight") {
         e.preventDefault();
-        goNext();
+        moveBy(1);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [goPrev, goNext]);
+  }, [moveBy]);
 
   if (!program) {
     return (
@@ -104,20 +137,17 @@ export default function LivePage() {
 
       <div className="flex items-center justify-center gap-4 pb-4">
         <button
-          onClick={goPrev}
+          onClick={() => moveBy(-1)}
           className="rounded-full bg-neutral-800 px-6 py-3 text-2xl text-white hover:bg-neutral-700 disabled:opacity-30"
-          disabled={items.length === 0 || (timer.itemIndex !== null && timer.itemIndex <= 0)}
+          disabled={items.length === 0 || (idx !== null && idx <= 0)}
           aria-label="Previous item"
         >
           ‹
         </button>
         <button
-          onClick={goNext}
+          onClick={() => moveBy(1)}
           className="rounded-full bg-neutral-800 px-6 py-3 text-2xl text-white hover:bg-neutral-700 disabled:opacity-30"
-          disabled={
-            items.length === 0 ||
-            (timer.itemIndex !== null && timer.itemIndex + 1 >= items.length)
-          }
+          disabled={items.length === 0 || (idx !== null && idx + 1 >= items.length)}
           aria-label="Next item"
         >
           ›
@@ -126,7 +156,7 @@ export default function LivePage() {
 
       <footer className="flex items-center justify-between px-8 py-6 text-xs uppercase tracking-widest text-white/50">
         <span>{formatOffset(program.tzOffset)}</span>
-        <span>{timer.mode === "A" ? "End on time" : "Full duration"}</span>
+        <span>{live.mode === "A" ? "End on time" : "Full duration"}</span>
         <span>{items.length} items</span>
       </footer>
     </main>
