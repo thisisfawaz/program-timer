@@ -334,19 +334,15 @@ export function useTimer(
   const paused = itemIndex !== null && pausedRef.current[itemIndex] !== undefined;
   const red = itemIndex !== null && remainingSec <= 0;
 
-  // Projected end. overruns[i] = minutes past item i's end (positive = it
-  // overran).
-  //  - Mode A (End on time): an overrun is absorbed by shortening the NEXT
-  //    item, so the program end does not move.
-  //  - Mode B (Full duration): nothing absorbs an overrun, so every overrun
-  //    pushes the program end later.
+  // Projected end = when the program will ACTUALLY finish, given reality —
+  // not the schedule. overruns[i] = minutes past item i's end (positive =
+  // overran, negative = finished early), so summing them shifts the planned
+  // end by the total lateness. Applies in BOTH modes.
   const plannedEnd = items.length ? items[items.length - 1].endsAtMin : null;
   let netShift = 0;
-  if (modeRef.current === "B") {
-    for (let i = 0; i < items.length; i++) {
-      const pastEnd = overrunsRef.current[i];
-      if (pastEnd !== undefined) netShift += pastEnd;
-    }
+  for (let i = 0; i < items.length; i++) {
+    const pastEnd = overrunsRef.current[i];
+    if (pastEnd !== undefined) netShift += pastEnd;
   }
   const newEndMin = plannedEnd !== null ? plannedEnd + netShift : null;
 
