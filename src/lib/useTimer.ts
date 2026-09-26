@@ -49,6 +49,8 @@ export function useTimer(
   const lastPublishedRef = useRef(0);
   /** Signature of the last payload we wrote — used to ignore our own echo. */
   const lastSentSigRef = useRef("");
+  /** Timestamp of the last local action; remote docs older than this are ignored. */
+  const lastLocalActionRef = useRef(0);
 
   const signature = (idx: number | null, clocks: Record<number, number>, overruns: Record<number, number>) =>
     JSON.stringify({ idx, clocks, overruns });
@@ -74,6 +76,7 @@ export function useTimer(
 
   const publish = useCallback(() => {
     if (!programId) return;
+    lastLocalActionRef.current = Date.now();
     lastPublishedRef.current = Date.now();
     lastSentSigRef.current = signature(
       itemIndexRef.current,
@@ -89,22 +92,39 @@ export function useTimer(
     }).catch(() => {});
   }, [programId]);
 
-  /** Settle the current item's ACTUAL elapsed once, when passing forward. */
+  /**
+   * Settle the current item's ACTUAL elapsed once, when passing forward.
+   * Measured from when we entered the item to now (minutes). This is what
+   * Mode A compares against the item's duration to compute any overrun.
+   */
   const settleCurrent = useCallback(() => {
     const idx = enteredItemRef.current;
-    const since = enteredAtRef.current;
-    if (idx === null || since === null) return;
+    if (idx === null) return;
     if (overrunsRef.current[idx] !== undefined) return; // already settled
-    overrunsRef.current[idx] = (Date.now() - since) / 60_000;
+    // Overrun = how far PAST the item's clock end we are (positive = red,
+    // negative = finished early). Measured from the clock, not entry time, so
+    // it cannot be reset by re-entering, pausing, or the adopt loop.
+    const anchor = clocksRef.current[idx];
+    if (anchor !== undefined) {
+      overrunsRef.current[idx] = (Date.now() - anchor) / 60_000;
+    } else {
+      const since = enteredAtRef.current ?? Date.now();
+      const dur = itemsRef.current[idx]?.effectiveDurationMin ?? 0;
+      overrunsRef.current[idx] = (Date.now() - since) / 60_000 - dur;
+    }
   }, []);
 
-  /** Deficit carried from the previous item (minutes), Mode A only. */
+  /**
+   * Deficit carried from the IMMEDIATELY previous item only (Mode A).
+   * `overruns[prev]` is minutes past that item's end: positive = it overran,
+   * so the next item is shortened by that much. Only one step — an overrun
+   * never chains past the following item.
+   */
   const deficitBefore = useCallback((idx: number): number => {
     if (modeRef.current !== "A" || idx <= 0) return 0;
-    const prev = itemsRef.current[idx - 1];
-    const prevActual = overrunsRef.current[idx - 1];
-    if (!prev || prevActual === undefined) return 0;
-    return Math.max(0, prevActual - prev.effectiveDurationMin);
+    const pastEnd = overrunsRef.current[idx - 1];
+    if (pastEnd === undefined) return 0;
+    return Math.max(0, pastEnd);
   }, []);
 
   /** Duration (minutes) an item gets when started. */
@@ -144,8 +164,17 @@ export function useTimer(
         // don't clobber local state (which was causing buttons to be overwritten).
         const sig = signature(ext.itemIndex, ext.clocks ?? {}, ext.overruns ?? {});
         if (sig === lastSentSigRef.current) return;
+        // Ignore remote docs older than or equal to our last local action —
+        // otherwise a write that hasn't landed yet reverts the press we just
+        // made (the "have to press Next twice" glitch). Using <= also handles
+        // the case where the remote state is our own echo.
+        if (ext.updatedAt && ext.updatedAt <= lastLocalActionRef.current) return;
         clocksRef.current = ext.clocks ?? {};
         pausedRef.current = ext.paused ?? {};
+        // The updatedAt check above already protects us from stale remote docs
+        // wiping local state, so we can safely adopt the remote overruns as-is.
+        // This also ensures actions like 'Stop' (which clears overruns to {})
+        // correctly propagate and clear the local state.
         overrunsRef.current = ext.overruns ?? {};
         if (ext.mode && ext.mode !== modeRef.current) {
           modeRef.current = ext.mode;
@@ -164,7 +193,7 @@ export function useTimer(
       active = false;
       window.clearInterval(id);
     };
-  }, [programId]);
+  }, [programId, signature]);
 
   /**
    * Give an item a clock if it doesn't have one yet.
@@ -199,9 +228,19 @@ export function useTimer(
       // or re-arm — doing so banked an overrun onto the item and collapsed its
       // own clock, showing a big negative).
       if (index === itemIndexRef.current) return;
-      // Passing forward: settle the item we're leaving (only when moving forward).
+      // Mark this as a local action BEFORE making changes, so the adopt loop
+      // will ignore any stale remote state that arrives before publish() completes.
+      lastLocalActionRef.current = Date.now();
+      // Passing forward: settle the item we're leaving, then clear the target's
+      // clock so it re-arms using durationFor — which now includes the previous
+      // item's overrun deduction (Mode A). Without this, a clock armed earlier
+      // (before the overrun was settled) would keep the full duration.
       const cur = itemIndexRef.current;
-      if (cur !== null && index > cur) settleCurrent();
+      if (cur !== null && index > cur) {
+        settleCurrent();
+        delete clocksRef.current[index];
+        delete pausedRef.current[index];
+      }
       itemIndexRef.current = index;
       setItemIndex(index);
       enteredItemRef.current = index;
@@ -217,6 +256,7 @@ export function useTimer(
       if (index < 0 || index >= itemsRef.current.length) return;
       // View change only. No-op if it's already the current item.
       if (index === itemIndexRef.current) return;
+      lastLocalActionRef.current = Date.now();
       itemIndexRef.current = index;
       setItemIndex(index);
       enteredItemRef.current = index;
@@ -247,6 +287,7 @@ export function useTimer(
     if (idx === null) return;
     const item = itemsRef.current[idx];
     if (!item) return;
+    lastLocalActionRef.current = Date.now();
     // Restart clears this item's settled overrun and gives a fresh full clock.
     delete overrunsRef.current[idx];
     delete pausedRef.current[idx];
@@ -259,6 +300,7 @@ export function useTimer(
   const togglePause = useCallback(() => {
     const idx = itemIndexRef.current;
     if (idx === null) return;
+    lastLocalActionRef.current = Date.now();
     if (pausedRef.current[idx] !== undefined) {
       const rem = pausedRef.current[idx];
       delete pausedRef.current[idx];
@@ -270,6 +312,7 @@ export function useTimer(
   }, [publish, remainingFor]);
 
   const stop = useCallback(() => {
+    lastLocalActionRef.current = Date.now();
     // Reset everything to scratch for both modes: clear per-item clocks,
     // paused seconds, and settled actuals/overruns, so every item restarts
     // from its full effective duration and the projected end reverts to plan.
@@ -296,17 +339,21 @@ export function useTimer(
   const paused = itemIndex !== null && pausedRef.current[itemIndex] !== undefined;
   const red = itemIndex !== null && remainingSec <= 0;
 
-  // Projected end = planned end - savings (settled items that finished early).
+  // Projected end. overruns[i] = minutes past item i's end (positive = it
+  // overran).
+  //  - Mode A (End on time): an overrun is absorbed by shortening the NEXT
+  //    item, so the program end does not move.
+  //  - Mode B (Full duration): nothing absorbs an overrun, so every overrun
+  //    pushes the program end later.
   const plannedEnd = items.length ? items[items.length - 1].endsAtMin : null;
-  let savings = 0;
-  for (let i = 0; i < items.length; i++) {
-    const actual = overrunsRef.current[i];
-    if (actual !== undefined) {
-      const save = items[i].effectiveDurationMin - actual;
-      if (save > 0) savings += save;
+  let netShift = 0;
+  if (modeRef.current === "B") {
+    for (let i = 0; i < items.length; i++) {
+      const pastEnd = overrunsRef.current[i];
+      if (pastEnd !== undefined) netShift += pastEnd;
     }
   }
-  const newEndMin = plannedEnd !== null ? plannedEnd - savings : null;
+  const newEndMin = plannedEnd !== null ? plannedEnd + netShift : null;
 
   return {
     itemIndex,
