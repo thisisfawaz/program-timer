@@ -334,17 +334,34 @@ export function useTimer(
   const paused = itemIndex !== null && pausedRef.current[itemIndex] !== undefined;
   const red = itemIndex !== null && remainingSec <= 0;
 
-  // Projected end = when the program will ACTUALLY finish, given reality —
-  // not the schedule. overruns[i] = minutes past item i's end (positive =
-  // overran, negative = finished early), so summing them shifts the planned
-  // end by the total lateness. Applies in BOTH modes.
+  // Projected end = a pure function of the current clock and the items.
+  // It is where the program will finish if the current item's clock is
+  // honored and every remaining item runs its full length. Mode and pause do
+  // not change it: mode only affects scheduling, and a paused clock is simply
+  // frozen at its end. With no current item, it is the planned end.
   const plannedEnd = items.length ? items[items.length - 1].endsAtMin : null;
-  let netShift = 0;
-  for (let i = 0; i < items.length; i++) {
-    const pastEnd = overrunsRef.current[i];
-    if (pastEnd !== undefined) netShift += pastEnd;
+  let newEndMin: number | null = plannedEnd;
+
+  if (itemIndex !== null && items[itemIndex]) {
+    // The current item's clock end (paused: now + frozen remaining).
+    const anchor =
+      pausedRef.current[itemIndex] !== undefined
+        ? Date.now() + pausedRef.current[itemIndex] * 1000
+        : clocksRef.current[itemIndex];
+
+    if (anchor !== undefined) {
+      // Program-tz time now, in minutes since midnight.
+      const d = new Date(Date.now() + tzOffset * 3600_000);
+      const nowMin = d.getUTCHours() * 60 + d.getUTCMinutes() + d.getUTCSeconds() / 60;
+      // When the current item ends, plus the full length of every item after it.
+      const currentEndMin = nowMin + (anchor - Date.now()) / 60_000;
+      let after = 0;
+      for (let i = itemIndex + 1; i < items.length; i++) {
+        after += items[i].effectiveDurationMin;
+      }
+      newEndMin = currentEndMin + after;
+    }
   }
-  const newEndMin = plannedEnd !== null ? plannedEnd + netShift : null;
 
   return {
     itemIndex,
