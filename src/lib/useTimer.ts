@@ -201,11 +201,22 @@ export function useTimer(
    * regardless of the clock. Leftover/saved time is never carried forward;
    * the only reduction is Mode A's previous-item overrun (via durationFor).
    */
+  /**
+   * Give an item a clock if it does not already have one.
+   *
+   * `how`:
+   *  - "schedule": anchor to the item's scheduled END (current time), so
+   *    pressing late starts reduced and pressing early starts full (capped).
+   *  - "full": run the item's full duration from now.
+   *
+   * An item that already has a clock KEEPS it — so returning to an item via
+   * Prev/Next never resets it; it continues from where it was.
+   */
   const armClock = useCallback(
-    (index: number) => {
+    (index: number, how: "schedule" | "full") => {
       if (clocksRef.current[index] !== undefined) return;
-      if (index === 0) {
-        const end = scheduledEndMs(0);
+      if (how === "schedule") {
+        const end = scheduledEndMs(index);
         clocksRef.current[index] =
           end !== null ? end : Date.now() + durationFor(index) * 60_000;
       } else {
@@ -226,21 +237,19 @@ export function useTimer(
       // Mark this as a local action BEFORE making changes, so the adopt loop
       // will ignore any stale remote state that arrives before publish() completes.
       lastLocalActionRef.current = Date.now();
-      // Passing forward: settle the item we're leaving, then clear the target's
-      // clock so it re-arms using durationFor — which now includes the previous
-      // item's overrun deduction (Mode A). Without this, a clock armed earlier
-      // (before the overrun was settled) would keep the full duration.
+      // If we are moving FORWARD past an item we were on, settle it so its
+      // overrun is recorded. We do NOT delete the target's clock: an item that
+      // already has a clock keeps it (so returning via Prev/Next continues).
       const cur = itemIndexRef.current;
       if (cur !== null && index > cur) {
         settleCurrent();
-        delete clocksRef.current[index];
-        delete pausedRef.current[index];
       }
       itemIndexRef.current = index;
       setItemIndex(index);
       enteredItemRef.current = index;
       enteredAtRef.current = Date.now();
-      armClock(index);
+      // Play always anchors to the schedule (current time).
+      armClock(index, "schedule");
       publish();
     },
     [settleCurrent, armClock, publish],
@@ -256,7 +265,9 @@ export function useTimer(
       setItemIndex(index);
       enteredItemRef.current = index;
       enteredAtRef.current = Date.now();
-      armClock(index);
+      // Prev shows the item's current state: anchor to schedule if it has no
+      // clock yet; otherwise keep its existing clock untouched.
+      armClock(index, "schedule");
       publish();
     },
     [armClock, publish],
@@ -268,8 +279,31 @@ export function useTimer(
       if (itemsRef.current.length > 0) start(0);
       return;
     }
-    if (idx + 1 < itemsRef.current.length) start(idx + 1);
-  }, [start]);
+    const target = idx + 1;
+    if (target >= itemsRef.current.length) return;
+
+    lastLocalActionRef.current = Date.now();
+    // Settle the item we are leaving (records its overrun).
+    settleCurrent();
+
+    // Decide how the target anchors, but ONLY if it has no clock yet.
+    // Mode B (Full duration): always start fresh from the beginning.
+    // Mode A (End on time): start fresh if the previous item did NOT overrun;
+    //   if it DID overrun, anchor to the schedule so the overrun carries.
+    let how: "schedule" | "full" = "full";
+    if (modeRef.current === "A") {
+      const pastEnd = overrunsRef.current[idx];
+      const overran = pastEnd !== undefined && pastEnd > 0;
+      how = overran ? "schedule" : "full";
+    }
+
+    itemIndexRef.current = target;
+    setItemIndex(target);
+    enteredItemRef.current = target;
+    enteredAtRef.current = Date.now();
+    armClock(target, how);
+    publish();
+  }, [settleCurrent, armClock, publish]);
 
   const prev = useCallback(() => {
     const idx = itemIndexRef.current;

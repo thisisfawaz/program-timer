@@ -83,18 +83,24 @@ export function settle(
   return { ...state, overruns: { ...state.overruns, [idx]: pastEnd } };
 }
 
-/** Give an item a clock if it doesn't have one yet. */
+/**
+ * Give an item a clock if it doesn't already have one.
+ *  - "schedule": anchor to the item's scheduled END (current time).
+ *  - "full": run the item's full duration from now.
+ * An existing clock is preserved, so Prev/Next never resets an item.
+ */
 export function armClock(
   items: EffectiveItem[],
   state: TimerState,
   idx: number,
   tzOffset: number,
+  how: "schedule" | "full",
   now: number = Date.now(),
 ): TimerState {
   if (state.clocks[idx] !== undefined) return state;
   let anchor: number;
-  if (idx === 0) {
-    const end = scheduledEndMs(items[0], tzOffset, now);
+  if (how === "schedule") {
+    const end = scheduledEndMs(items[idx], tzOffset, now);
     anchor = end !== null ? end : now + durationFor(items, state, idx) * 60_000;
   } else {
     anchor = now + durationFor(items, state, idx) * 60_000;
@@ -105,9 +111,12 @@ export function armClock(
 }
 
 /**
- * Move to an item the way Control does. When moving FORWARD, the item we are
- * leaving is settled (its overrun recorded) and the target's clock is cleared
- * so it re-arms using durationFor — applying Mode A's one-step deduction.
+ * Move to an item. Settles the item we leave when moving forward. The target's
+ * anchor is chosen only if it has no clock yet:
+ *  - NEXT (forward): Mode B always "full"; Mode A "full" unless the previous
+ *    item overran, in which case "schedule" (so the overrun carries).
+ *  - PREV (backward): "schedule" (show the item's current state).
+ * An existing clock is never reset, so Prev→Next continues the item.
  */
 export function moveTo(
   items: EffectiveItem[],
@@ -128,15 +137,18 @@ export function moveTo(
     next = settle(items, next, cur as number, now);
   }
 
-  const clocks = { ...next.clocks };
-  const paused = { ...next.paused };
+  let how: "schedule" | "full" = "schedule";
   if (forward) {
-    // Force the target to re-arm with the (possibly reduced) duration.
-    delete clocks[index];
-    delete paused[index];
+    if (next.mode === "B") {
+      how = "full";
+    } else {
+      const pastEnd = cur !== null ? next.overruns[cur] : undefined;
+      const overran = pastEnd !== undefined && pastEnd > 0;
+      how = overran ? "schedule" : "full";
+    }
   }
 
-  next = { ...next, itemIndex: index, clocks, paused };
-  next = armClock(items, next, index, tzOffset, now);
+  next = { ...next, itemIndex: index };
+  next = armClock(items, next, index, tzOffset, how, now);
   return next;
 }
