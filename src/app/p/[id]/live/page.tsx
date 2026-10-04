@@ -130,7 +130,7 @@ export default function LivePage() {
         <p
           className={`tnum relative -top-7 font-bold leading-none ${
             hasHours
-              ? "text-[18vw] sm:text-[16vw]"
+              ? "text-[22vw] sm:text-[20vw]"
               : "text-[30vw] sm:text-[26vw]"
           } ${red ? "text-red-500" : "text-white"}`}
         >
