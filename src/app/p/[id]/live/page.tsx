@@ -55,6 +55,10 @@ export default function LivePage() {
   }, [idx, live.paused, live.clocks]);
 
   const red = idx !== null && remainingSec <= 0;
+  const countdown = current ? formatCountdown(remainingSec) : "--:--";
+  // Shrink only when the countdown shows hours (>= 1h), based on the actual
+  // time — not the string length (a negative sign must not trigger it).
+  const hasHours = current ? Math.abs(remainingSec) >= 3600 : false;
 
   // Move the shared timer by one item, using the same logic as Control.
   const moveBy = useCallback(
@@ -124,11 +128,13 @@ export default function LivePage() {
           {current ? current.name || "Untitled item" : "No item selected"}
         </p>
         <p
-          className={`tnum relative -top-7 text-[30vw] font-bold leading-none sm:text-[26vw] ${
-            red ? "text-red-500" : "text-white"
-          }`}
+          className={`tnum relative -top-7 font-bold leading-none ${
+            hasHours
+              ? "text-[18vw] sm:text-[16vw]"
+              : "text-[30vw] sm:text-[26vw]"
+          } ${red ? "text-red-500" : "text-white"}`}
         >
-          {current ? formatCountdown(remainingSec) : "--:--"}
+          {countdown}
         </p>
       </div>
 
