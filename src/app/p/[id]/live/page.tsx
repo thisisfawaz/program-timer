@@ -107,7 +107,7 @@ export default function LivePage() {
   }
 
   return (
-    <main className="flex min-h-screen flex-col bg-neutral-950">
+    <main className="flex h-screen flex-col overflow-hidden bg-neutral-950">
       <HeartbeatDot />
       <header className="flex items-center justify-between px-8 py-6">
         <p className="text-sm font-medium uppercase tracking-widest text-white/70">
@@ -116,26 +116,34 @@ export default function LivePage() {
         <p className="tnum text-xl text-white/80">{clock}</p>
       </header>
 
-      <div className="flex flex-1 flex-col items-center justify-center gap-3 px-8 text-center">
-        <p className="min-h-[1.25rem] text-xs uppercase tracking-widest text-white/40">
+      <div className="flex flex-col items-center gap-4 px-8 text-center">
+        <p className="min-h-[1.5rem] text-base font-semibold uppercase tracking-widest text-white/40 sm:text-lg">
           {previous ? previous.name : "\u00A0"}
         </p>
-        <p className="text-3xl font-medium text-white/90 sm:text-4xl">
+        <p className="text-5xl font-semibold text-white sm:text-7xl">
           {current ? current.name || "Untitled item" : "No item selected"}
         </p>
         <p
-          className={`tnum text-[24vw] font-bold leading-none sm:text-[20vw] ${
+          className={`tnum relative -top-7 text-[30vw] font-bold leading-none sm:text-[26vw] ${
             red ? "text-red-500" : "text-white"
           }`}
         >
           {current ? formatCountdown(remainingSec) : "--:--"}
         </p>
-        <p className="min-h-[1.25rem] text-xs uppercase tracking-widest text-white/40">
+      </div>
+
+      {/* Equal spacers above and below NEXT keep it centered in the gap. */}
+      <div className="flex-1" />
+
+      <div className="relative -top-10 flex items-center justify-center px-8 text-center">
+        <p className="text-4xl font-semibold uppercase tracking-widest text-white/50 sm:text-5xl">
           {nextItem ? nextItem.name : "\u00A0"}
         </p>
       </div>
 
-      <div className="flex items-center justify-center gap-4 pb-4">
+      <div className="flex-1" />
+
+      <div className="flex items-center justify-center gap-4 pb-6">
         <button
           onClick={() => moveBy(-1)}
           className="rounded-full bg-neutral-800 px-6 py-3 text-2xl text-white hover:bg-neutral-700 disabled:opacity-30"
@@ -154,7 +162,7 @@ export default function LivePage() {
         </button>
       </div>
 
-      <footer className="flex items-center justify-between px-8 py-6 text-xs uppercase tracking-widest text-white/50">
+      <footer className="relative -top-4 flex items-center justify-between px-8 py-6 text-xs uppercase tracking-widest text-white/50">
         <span>{formatOffset(program.tzOffset)}</span>
         <span>{live.mode === "A" ? "End on time" : "Full duration"}</span>
         <span>{items.length} items</span>
